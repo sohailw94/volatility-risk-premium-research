@@ -13,4 +13,4 @@ The V7 change removed executable standalone short calls while preserving standal
 
 The January recheck is too small to support a performance claim: only two positions closed. The June recheck has six completed positions, four profitable and two unprofitable. These results support the engineering hypothesis that removing the previously miscalibrated naked-call expression materially reduces the failure mode observed in earlier tests, but they are **not sufficient to establish statistically significant alpha**.
 
-Raw QuantConnect exports are retained in the two result directories so every number can be audited.
+The two result directories contain the QuantConnect **orders and completed-trades CSV exports** used for these figures. Full engine JSON output is retained outside the public repository because it is large and mostly platform metadata; the compact published artifacts contain the trade-level evidence needed to audit the headline results.
