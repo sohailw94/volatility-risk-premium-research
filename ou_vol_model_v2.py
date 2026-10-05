@@ -46,4 +46,3 @@ def update_ou_features(algorithm, surface: pd.DataFrame) -> pd.DataFrame:
         series=pd.Series([x[1] for x in hist],dtype=float); params=estimate_ou_params(series)
         rows.append({"ticker":ticker,"snapshot_date":today,"current_atm_iv":float(r.atm_iv),**params})
     return pd.DataFrame(rows)
-
