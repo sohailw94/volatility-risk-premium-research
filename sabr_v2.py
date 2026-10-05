@@ -53,6 +53,11 @@ def _fit_one(g):
 
 
 def calibrate_surface(surface, target_dte=None):
+    """Fit exactly one expiry per ticker: nearest the frozen target DTE.
+
+    Returns (calibrations, contract_scores).  contract_scores contains each
+    contract's market IV, fitted fair IV, residual, and robust residual z-score.
+    """
     target_dte = cfg.TARGET_DTE if target_dte is None else int(target_dte)
     if surface is None or surface.empty:
         return pd.DataFrame(), pd.DataFrame()
