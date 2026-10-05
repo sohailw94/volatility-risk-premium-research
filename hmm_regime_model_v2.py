@@ -71,6 +71,11 @@ def latest_regimes_from_prices(prices, min_observations=None):
                 random_state=random_state,
             )
 
+            # hmmlearn reports tiny negative EM log-likelihood deltas through
+            # the `hmmlearn.base` logger. In QuantConnect those warning lines can
+            # be surfaced as a fatal runtime error even though `fit` itself did
+            # not raise. Keep those numerical warnings inside this model wrapper;
+            # genuine fit exceptions still propagate to the existing GMM fallback.
             hmm_logger = logging.getLogger('hmmlearn.base')
             old_level = hmm_logger.level
             try:
