@@ -81,7 +81,7 @@ See [`docs/V7_FREEZE.md`](docs/V7_FREEZE.md).
 | Jan-2023 engineering recheck | 2 | 100% | +$67.40 | +0.067% | 0.90% |
 | Jun-2025 engineering recheck | 6 | 66.7% | +$398.40 | +0.398% | 0.90% |
 
-The raw QuantConnect exports are under [`results/`](results/).
+The public research exports are under [`results/`](results/). Orders, completed trades, and an auditable result summary are included; the large QuantConnect engine JSON payloads are intentionally omitted from the public repository.
 
 **These two windows are not presented as out-of-sample validation.** January was used during the debugging process and June was already inspected in V6. The sample is small and does not establish statistical significance. The value of the project is the falsification / ablation process and the traceable evolution from a failing implementation toward a more coherent portfolio expression.
 
@@ -99,9 +99,9 @@ The code is designed for QuantConnect/LEAN. To reproduce a test:
 2. Upload the `.py` files in the repository root.
 3. Set the desired research window in `qc_config_v2.py`.
 4. Keep the model and execution parameters frozen when comparing windows.
-5. Export `orders.csv`, `trades.csv` and the backtest JSON after each run.
+5. Export `orders.csv`, `trades.csv` and the backtest JSON after each run; retain the full engine JSON locally and publish compact auditable extracts where appropriate.
 
-The historical result files in this repository preserve the exact QuantConnect exports used in the research notes.
+The historical CSV result files in this repository preserve the QuantConnect order/trade exports used in the research notes.
 
 ## Research limitations
 
