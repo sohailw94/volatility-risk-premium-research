@@ -114,4 +114,4 @@ The current evidence is intentionally described conservatively:
 - execution/fill assumptions remain backtest approximations;
 - historical robustness is not equivalent to prospective live validation.
 
-The next research step is to keep V7 frozen and test additional pre-specified windows rather than continue threshold tuning.
+
