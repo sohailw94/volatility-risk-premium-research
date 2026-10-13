@@ -51,6 +51,10 @@ Standalone calls remain visible to the research process but are **not executable
 
 These are **engineering rechecks, not out-of-sample validation**. The sample is small and does not establish statistical significance.
 
+![V7 net P&L per closed trade](docs/img/v7_trade_pnl.png)
+
+**Next:** a continuous 2018–2026 walk-forward test that trades through Feb–Mar 2020, 2022, Aug 2024 and Apr 2025, benchmarked against a systematic put-write (Cboe PUT index), with naked vs. defined-risk structures and theta/vega/gamma P&L attribution.
+
 The important result is the research process: the original strategy failed, the failure was decomposed, model/execution mismatches were isolated, and V7 expresses only the exposures that survived those diagnostics.
 
 ## Repository map

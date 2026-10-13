@@ -2,7 +2,6 @@ from AlgorithmImports import *
 from datetime import date
 import qc_config_v2 as cfg
 # Load the exit-only executable-natural / individual-flatten overlay.
-import execution_v2_hotfix  # noqa: F401
 from workflow_v2 import run_workflow
 from execution_policy_v2 import manage_open_positions, cancel_stale_entry_orders, handle_execution_order_event
 

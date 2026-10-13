@@ -370,33 +370,121 @@ def _submit_combo_market_close(algorithm, structure, tag):
   tickets = algorithm.combo_market_order(legs, int(structure['contracts']), tag=tag)
   return list(tickets) if tickets is not None else []
 
-def _submit_market_fallback(algorithm, structure, tag):
-  if not _has_structure_holding(algorithm, structure):
-    return []
-  actual = [_holding_qty(algorithm, s) for s in structure['symbols']]
-  expected = [int(q) * int(structure['contracts']) for q in structure['qtys']]
-  ticket_list = []
-  if actual == expected and (not structure.get('force_individual_close', False)):
+def _registry_key_for_structure(algorithm, structure):
+    for key, value in getattr(algorithm, '_vh_open_structures', {}).items():
+        if value is structure:
+            return key
+    return None
+
+
+def _schedule_flatten_verify(algorithm, structure, attempt, delay_minutes=2):
+    key = _registry_key_for_structure(algorithm, structure)
+    if key is None:
+        return False
+
+    when = pd.Timestamp(algorithm.time) + pd.Timedelta(minutes=int(delay_minutes))
+    if when.date() != pd.Timestamp(algorithm.time).date():
+        return False
+
     try:
-      ticket_list = _submit_combo_market_close(algorithm, structure, tag)
+        dr = algorithm.date_rules.on(int(when.year), int(when.month), int(when.day))
+        tr = algorithm.time_rules.at(int(when.hour), int(when.minute))
+
+        def _callback():
+            _verify_individual_flatten(algorithm, key, int(attempt))
+
+        algorithm.schedule.on(dr, tr, _callback)
+        return True
     except Exception as exc:
-      algorithm.error(f"COMBO MARKET EXIT FAILED {structure['ticker']}: {type(exc).__name__}: {exc}")
-      structure['force_individual_close'] = True
-  if not ticket_list:
-    ticket_list = _submit_individual_flatten(algorithm, structure, tag)
+        algorithm.error(
+            f"INDIVIDUAL EXIT VERIFY SCHEDULE FAILED {key}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return False
+
+
+def _verify_individual_flatten(algorithm, key, attempt):
+    _prune_registry(algorithm)
+    structure = getattr(algorithm, '_vh_open_structures', {}).get(key)
+    if structure is None or structure.get('closed'):
+        return
+
+    if not _has_structure_holding(algorithm, structure):
+        structure['closed'] = True
+        structure['close_pending'] = False
+        return
+
+    # Do not permit any previous close ticket (including a stale combo-market
+    # ticket) to survive while we flatten residual holdings individually.
+    try:
+        _cancel_close_tickets_intentionally(
+            algorithm,
+            structure,
+            f"Individual market verify attempt {attempt}",
+        )
+    except Exception:
+        pass
+
+    tag = str(structure.get('close_tag', 'VH_EXIT'))
+    tickets = _submit_individual_flatten(algorithm, structure, tag)
+    structure['close_ticket_ids'] = _ticket_ids(tickets)
+    structure['close_pending'] = bool(structure['close_ticket_ids'])
+    structure['close_stage'] = 'INDIVIDUAL_MARKET'
+    structure['close_submit_time'] = pd.Timestamp(algorithm.time)
     structure['force_individual_close'] = True
-  structure['close_ticket_ids'] = _ticket_ids(ticket_list)
-  structure['close_pending'] = bool(structure['close_ticket_ids'])
-  structure['close_tag'] = tag
-  structure['close_stage'] = 'MARKET'
-  structure['close_submit_time'] = pd.Timestamp(algorithm.time)
-  structure['close_failed'] = False
-  if not _has_structure_holding(algorithm, structure):
-    structure['closed'] = True
-    structure['close_pending'] = False
-    if not structure.get('close_confirmed_logged'):
-      structure['close_confirmed_logged'] = True
-  return ticket_list
+
+    if not _has_structure_holding(algorithm, structure):
+        structure['closed'] = True
+        structure['close_pending'] = False
+        return
+
+    if int(attempt) < 2:
+        _schedule_flatten_verify(algorithm, structure, int(attempt) + 1, 2)
+    else:
+        algorithm.error(
+            f"INDIVIDUAL EXIT RESIDUAL {structure.get('ticker')} "
+            f"after {attempt} verification attempts"
+        )
+
+
+# Final exit fallback: individual-leg market flatten, never combo-market.
+def _submit_market_fallback(algorithm, structure, tag):
+    """Final fallback = individual-leg market flatten, never combo-market."""
+    if not _has_structure_holding(algorithm, structure):
+        return []
+
+    # Defensive: cancel any working grouped close order first.
+    try:
+        _cancel_close_tickets_intentionally(
+            algorithm,
+            structure,
+            'Final fallback -> individual market',
+        )
+    except Exception:
+        pass
+
+    structure['force_individual_close'] = True
+    ticket_list = _submit_individual_flatten(algorithm, structure, tag)
+
+    structure['close_ticket_ids'] = _ticket_ids(ticket_list)
+    structure['close_pending'] = bool(structure['close_ticket_ids'])
+    structure['close_tag'] = tag
+    structure['close_stage'] = 'INDIVIDUAL_MARKET'
+    structure['close_submit_time'] = pd.Timestamp(algorithm.time)
+    structure['close_failed'] = False
+
+    algorithm.debug(
+        f"EXIT INDIVIDUAL MARKET FALLBACK {structure.get('ticker')} "
+        f"{structure.get('structure')} {tag}"
+    )
+
+    if not _has_structure_holding(algorithm, structure):
+        structure['closed'] = True
+        structure['close_pending'] = False
+        return ticket_list
+
+    _schedule_flatten_verify(algorithm, structure, 1, 2)
+    return ticket_list
 
 def _process_exit_followup(algorithm, key, cycle, expected_stage):
   _prune_registry(algorithm)
@@ -560,19 +648,56 @@ def _sync_actual_entry_premium(algorithm, structure):
   return True
 
 def _position_snapshot(algorithm, structure):
-  now = pd.Timestamp(algorithm.time).normalize()
-  remaining = int((structure['expiry'] - now).days)
-  mark = _signed_mark(algorithm, structure['symbols'], structure['qtys'])
-  if mark is None:
-    return None
-  contracts = int(structure['contracts'])
-  if structure['premium_type'] == 'CREDIT':
-    gross = (mark + structure['entry_credit']) * cfg.CONTRACT_MULTIPLIER * contracts
-    base = max(structure['entry_credit'] * cfg.CONTRACT_MULTIPLIER * contracts, 1e-09)
-  else:
-    gross = (mark - structure['entry_debit']) * cfg.CONTRACT_MULTIPLIER * contracts
-    base = max(structure['entry_debit'] * cfg.CONTRACT_MULTIPLIER * contracts, 1e-09)
-  return {'remaining': remaining, 'mark': float(mark), 'gross': float(gross), 'base': float(base), 'profit_target': float(cfg.PROFIT_TARGET_FRACTION * base), 'stop_loss': float(-cfg.STOP_LOSS_MULTIPLE * base)}
+    """Return executable liquidation P&L plus midpoint diagnostics.
+
+    ``gross`` is intentionally the NATURAL executable P&L and therefore is the
+    number consumed by the unchanged PT/SL rules in manage_open_positions.
+    """
+    now = pd.Timestamp(algorithm.time).normalize()
+    remaining = int((structure['expiry'] - now).days)
+
+    symbols = list(structure.get('symbols', []))
+    qtys = [int(q) for q in structure.get('qtys', [])]
+    if not symbols or len(symbols) != len(qtys):
+        return None
+
+    mid_mark = _signed_mark(algorithm, symbols, qtys)
+    close_qtys = [-q for q in qtys]
+    close_natural = _signed_natural(algorithm, symbols, close_qtys)
+    if mid_mark is None or close_natural is None:
+        return None
+
+    contracts = int(structure.get('contracts', 0) or 0)
+    if contracts <= 0:
+        return None
+
+    premium_type = str(structure.get('premium_type', '')).upper()
+    mult = float(cfg.CONTRACT_MULTIPLIER)
+
+    if premium_type == 'CREDIT':
+        credit = float(structure.get('entry_credit', 0.0) or 0.0)
+        entry_signed = -credit
+        gross_mid = (float(mid_mark) + credit) * mult * contracts
+        base = max(credit * mult * contracts, 1e-9)
+    else:
+        debit = float(structure.get('entry_debit', 0.0) or 0.0)
+        entry_signed = debit
+        gross_mid = (float(mid_mark) - debit) * mult * contracts
+        base = max(debit * mult * contracts, 1e-9)
+
+    # Cash P&L = -(signed entry package + signed natural close package).
+    gross_exec = -(entry_signed + float(close_natural)) * mult * contracts
+
+    return {
+        'remaining': remaining,
+        'mark': float(mid_mark),
+        'close_natural': float(close_natural),
+        'gross_mid': float(gross_mid),
+        'gross': float(gross_exec),
+        'base': float(base),
+        'profit_target': float(cfg.PROFIT_TARGET_FRACTION * base),
+        'stop_loss': float(-cfg.STOP_LOSS_MULTIPLE * base),
+    }
 
 def _update_management_diagnostics(structure, snap):
   gross = float(snap['gross'])
